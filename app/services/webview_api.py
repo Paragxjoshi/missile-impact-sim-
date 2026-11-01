@@ -112,6 +112,9 @@ class SimulatorApi:
             is_nuclear=is_nuclear,
             nuclear_yield_kt=float(nuclear_yield_kt),
             pop_density_per_km2=density,
+            target_population=pop_info.get("population"),
+            target_lon=dest.get("longitude"),
+            target_lat=dest.get("latitude"),
         )
 
         return {

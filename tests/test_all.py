@@ -166,5 +166,42 @@ class TestMissileSimulator(unittest.TestCase):
             root.destroy()
 
 
+    def test_target_specific_realism(self):
+        missiles = load_missiles()
+        agni_v = next(m for m in missiles if m["id"] == "agni_v")
+        
+        # sonipat target
+        eff_sonipat = compute_impact_effects(
+            missile=agni_v,
+            distance_km=46.1,
+            is_nuclear=True,
+            nuclear_yield_kt=250.0,
+            pop_density_per_km2=2603.0,
+            target_population=289333,
+            target_lon=77.0178,
+            target_lat=28.9931,
+        )
+        
+        # delhi target
+        eff_delhi = compute_impact_effects(
+            missile=agni_v,
+            distance_km=5.9,
+            is_nuclear=True,
+            nuclear_yield_kt=250.0,
+            pop_density_per_km2=11300.0,
+            target_population=11034555,
+            target_lon=77.2167,
+            target_lat=28.6667,
+        )
+        
+        # verify distinct values
+        self.assertNotEqual(eff_sonipat["estimates"]["estimated_fatalities"], eff_delhi["estimates"]["estimated_fatalities"])
+        self.assertNotEqual(eff_sonipat["estimates"]["structures_destroyed"], eff_delhi["estimates"]["structures_destroyed"])
+        self.assertNotEqual(eff_sonipat["radii_km"]["heavy_blast_20psi_km"], eff_delhi["radii_km"]["heavy_blast_20psi_km"])
+        self.assertNotEqual(eff_sonipat["flight_time_avg_min"], eff_delhi["flight_time_avg_min"])
+        self.assertIn("blast_pattern", eff_sonipat)
+        self.assertIn("blast_pattern", eff_delhi)
+
+
 if __name__ == "__main__":
     unittest.main()

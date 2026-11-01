@@ -794,9 +794,13 @@ class MissileSimulatorApp(tk.Tk):
 
     def _apply_missile(self, m: Dict[str, Any]) -> None:
         self.selected_missile = m
+        if m.get("nuclear_capable"):
+            def_y = m.get("default_nuclear_yield_kt", 250)
+            self.yield_var.set(str(int(def_y) if def_y == int(def_y) else def_y))
         self._update_spec_card()
         self._update_warhead_ui_state()
         self._update_range_and_pins()
+        self._update_assessment_preview()
 
     def _update_spec_card(self) -> None:
         if not self.selected_missile:
@@ -840,9 +844,11 @@ class MissileSimulatorApp(tk.Tk):
     def _on_warhead_mode_changed(self) -> None:
         self._update_warhead_ui_state()
         self._update_range_and_pins()
+        self._update_assessment_preview()
 
     def _on_yield_changed(self) -> None:
         self._update_range_and_pins()
+        self._update_assessment_preview()
 
     def _set_pick_mode(self, mode: str) -> None:
         self.active_pick_mode = mode
@@ -860,6 +866,7 @@ class MissileSimulatorApp(tk.Tk):
     def _on_origin_selected(self, cand: Optional[PlaceCandidate]) -> None:
         self.origin_candidate = cand
         self._update_range_and_pins()
+        self._update_assessment_preview()
         if cand and self.bridge:
             self.bridge.update_state(
                 origin={"label": cand.label, "longitude": cand.longitude, "latitude": cand.latitude},
@@ -888,12 +895,14 @@ class MissileSimulatorApp(tk.Tk):
             self.current_pop_info = None
 
         self._update_range_and_pins()
+        self._update_assessment_preview()
 
     def _apply_population_update(self, pop: Dict[str, Any]) -> None:
         self.current_pop_info = pop
         pop_num = pop.get("population", 0)
         dens_num = pop.get("density_per_km2", 0.0)
         self.target_pop_var.set(f"Pop: {pop_num:,} | Density: {dens_num:,.0f}/km2")
+        self._update_assessment_preview()
 
     def on_globe_pick(self, role: str, lon: float, lat: float) -> None:
         """callback invoked from bridge server when user clicks or drags pin on globe"""
@@ -934,6 +943,7 @@ class MissileSimulatorApp(tk.Tk):
                 self._apply_population_update(pop_data)
 
         self._update_range_and_pins()
+        self._update_assessment_preview()
 
     def _update_range_and_pins(self) -> None:
         o_data = (
@@ -1067,6 +1077,45 @@ class MissileSimulatorApp(tk.Tk):
 
         self._render_results(res)
 
+    def _update_assessment_preview(self) -> None:
+        if not self.dest_candidate or not self.selected_missile:
+            return
+
+        is_nuke = bool(self.is_nuclear_var.get())
+        yield_kt = float(self.yield_var.get()) if is_nuke else float(self.selected_missile.get("conventional_yield_kt", 0.001))
+
+        if self.current_pop_info:
+            pop_info = self.current_pop_info
+        else:
+            pop_info = self.api.get_population(
+                self.dest_candidate.longitude, self.dest_candidate.latitude, self.dest_candidate.label
+            )
+            self.current_pop_info = pop_info
+
+        density = float(pop_info.get("density_per_km2", 1500.0))
+        target_pop = pop_info.get("population")
+
+        impact = compute_impact_effects(
+            missile=self.selected_missile,
+            distance_km=self.current_distance_km,
+            is_nuclear=is_nuke,
+            nuclear_yield_kt=yield_kt,
+            pop_density_per_km2=density,
+            target_population=target_pop,
+            target_lon=self.dest_candidate.longitude,
+            target_lat=self.dest_candidate.latitude,
+        )
+
+        res = {
+            "success": True,
+            "in_range": self.is_in_range,
+            "distance_km": self.current_distance_km,
+            "missile": self.selected_missile,
+            "impact": impact,
+            "population_info": pop_info,
+        }
+        self._render_results(res)
+
     def _render_results(self, res: Dict[str, Any]) -> None:
         for widget in self.results_container.winfo_children():
             widget.destroy()
@@ -1082,10 +1131,15 @@ class MissileSimulatorApp(tk.Tk):
 
         tk.Label(c1, text=f"{missile['name']} ({missile.get('country', '')})", font=FONT_BOLD, fg=COLOR_ACCENT, bg=COLOR_PANEL_BG).pack(anchor="w")
         tk.Label(c1, text=f"Warhead: {impact['warhead_mode']}", fg=COLOR_TEXT, bg=COLOR_PANEL_BG, font=FONT_NORMAL).pack(anchor="w")
-        tk.Label(c1, text=f"Distance: {dist_km:,.1f} km", fg=COLOR_TEXT, bg=COLOR_PANEL_BG, font=FONT_NORMAL).pack(anchor="w")
+        dist_txt = f"Distance: {dist_km:,.1f} km" if dist_km > 0 else "Distance: Select origin to calculate distance"
+        tk.Label(c1, text=dist_txt, fg=COLOR_TEXT, bg=COLOR_PANEL_BG, font=FONT_NORMAL).pack(anchor="w")
 
-        top_txt = f"Top Speed: Mach {impact['top_speed_mach']} ({impact['top_speed_kmh']:,.0f} km/h) -> {impact['flight_time_top_min']} min"
-        avg_txt = f"Avg Speed: Mach {impact['avg_speed_mach']} ({impact['avg_speed_kmh']:,.0f} km/h) -> {impact['flight_time_avg_min']} min"
+        if dist_km > 0:
+            top_txt = f"Top Speed: Mach {impact['top_speed_mach']} ({impact['top_speed_kmh']:,.0f} km/h) -> {impact['flight_time_top_min']} min"
+            avg_txt = f"Avg Speed: Mach {impact['avg_speed_mach']} ({impact['avg_speed_kmh']:,.0f} km/h) -> {impact['flight_time_avg_min']} min"
+        else:
+            top_txt = f"Top Speed: Mach {impact['top_speed_mach']} ({impact['top_speed_kmh']:,.0f} km/h)"
+            avg_txt = f"Avg Speed: Mach {impact['avg_speed_mach']} ({impact['avg_speed_kmh']:,.0f} km/h)"
         tk.Label(c1, text=top_txt, fg=COLOR_MUTED, bg=COLOR_PANEL_BG, font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
         tk.Label(c1, text=avg_txt, fg=COLOR_MUTED, bg=COLOR_PANEL_BG, font=FONT_SMALL).pack(anchor="w")
 
@@ -1101,6 +1155,18 @@ class MissileSimulatorApp(tk.Tk):
         # Card 3: Blast & Thermal Radii
         c3 = ttk.LabelFrame(self.results_container, text="Blast & Thermal Radii", padding=8)
         c3.pack(fill="x", pady=4)
+
+        if "blast_pattern" in impact:
+            pat_lbl = tk.Label(
+                c3,
+                text=f"Pattern: {impact['blast_pattern']}",
+                fg=COLOR_ACCENT,
+                bg=COLOR_PANEL_BG,
+                font=FONT_SMALL,
+                wraplength=340,
+                justify="left",
+            )
+            pat_lbl.pack(fill="x", pady=(0, 4), anchor="w")
 
         r = impact["radii_km"]
         radii_items = [
