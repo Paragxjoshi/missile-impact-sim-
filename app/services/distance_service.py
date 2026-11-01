@@ -10,10 +10,7 @@ def calculate_great_circle_distance_km(
     dest_lon: float,
     dest_lat: float,
 ) -> float:
-    """
-    Calculates the great-circle surface distance in kilometers
-    between two [longitude, latitude] coordinates using the Haversine formula.
-    """
+    """calculates great-circle distance in kilometers using haversine"""
     validate_lon_lat(origin_lon, origin_lat)
     validate_lon_lat(dest_lon, dest_lat)
 

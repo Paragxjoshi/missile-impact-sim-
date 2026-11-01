@@ -1,1 +1,1 @@
-"""Real-World Missile Impact Simulator Package."""
+"""Missile impact simulator package."""

@@ -1,9 +1,3 @@
-"""
-Real-World Missile Impact Simulator
-===================================
-A desktop application built mandatorily with Tkinter as the primary GUI framework,
-embedding a high-performance PyView (pywebview) 3D CesiumJS Earth geospatial engine.
-"""
 import sys
 from pathlib import Path
 
@@ -15,7 +9,6 @@ from app.ui.main_window import launch_simulator_app
 
 
 def main() -> None:
-    """Launches the Tkinter Master Application embedding the PyView 3D Earth view."""
     launch_simulator_app()
 
 

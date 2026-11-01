@@ -7,7 +7,7 @@ DB_PATH = Path(__file__).resolve().parent.parent.parent / "scenarios.db"
 
 
 class ScenarioDatabase:
-    """Manages local SQLite persistence for saved missile simulation scenarios."""
+    """sqlite storage for simulation scenarios"""
 
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = db_path
@@ -17,6 +17,11 @@ class ScenarioDatabase:
         conn = sqlite3.connect(self.db_path)
         try:
             with conn:
+                # drop old schema if column names were from an earlier version
+                cols = [row[1] for row in conn.execute("PRAGMA table_info(scenarios)").fetchall()]
+                if cols and "missile_id" not in cols:
+                    conn.execute("DROP TABLE scenarios")
+
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS scenarios (
@@ -29,11 +34,11 @@ class ScenarioDatabase:
                         destination_longitude REAL NOT NULL,
                         destination_latitude REAL NOT NULL,
                         map_provider TEXT,
-                        provider_place_ids_or_source_metadata TEXT,
-                        selected_reference_record_id TEXT,
-                        hypothetical_assessment_zone_parameters TEXT,
+                        source_info TEXT,
+                        missile_id TEXT,
+                        params TEXT,
                         population_data_source TEXT,
-                        assumptions_and_uncertainty_notes TEXT,
+                        notes TEXT,
                         created_at TEXT,
                         updated_at TEXT
                     )
@@ -51,10 +56,8 @@ class ScenarioDatabase:
                     INSERT INTO scenarios (
                         scenario_name, origin_city_label, origin_longitude, origin_latitude,
                         destination_city_label, destination_longitude, destination_latitude,
-                        map_provider, provider_place_ids_or_source_metadata,
-                        selected_reference_record_id, hypothetical_assessment_zone_parameters,
-                        population_data_source, assumptions_and_uncertainty_notes,
-                        created_at, updated_at
+                        map_provider, source_info, missile_id, params,
+                        population_data_source, notes, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
@@ -66,16 +69,25 @@ class ScenarioDatabase:
                         scenario.destination_longitude,
                         scenario.destination_latitude,
                         scenario.map_provider,
-                        scenario.provider_place_ids_or_source_metadata,
-                        scenario.selected_reference_record_id,
-                        scenario.hypothetical_assessment_zone_parameters,
+                        scenario.source_info,
+                        scenario.missile_id,
+                        scenario.params,
                         scenario.population_data_source,
-                        scenario.assumptions_and_uncertainty_notes,
+                        scenario.notes,
                         scenario.created_at,
                         scenario.updated_at,
                     ),
                 )
                 return int(cur.lastrowid)
+        finally:
+            conn.close()
+
+    def delete_scenario(self, scenario_id: int) -> None:
+        """deletes a saved scenario by id"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            with conn:
+                conn.execute("DELETE FROM scenarios WHERE scenario_id = ?", (scenario_id,))
         finally:
             conn.close()
 

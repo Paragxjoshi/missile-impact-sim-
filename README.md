@@ -1,85 +1,96 @@
-# Real-World Missile Impact Simulator
+# Missile Impact Simulator
 
-A desktop application developed mandatorily using **Python Tkinter** as the core GUI framework, seamlessly embedding a high-performance **PyView (`pywebview`)** and **CesiumJS 3D Earth** geospatial viewport. The application delivers real-time 3D orbital trajectory simulation, Glasstone-Dolan nuclear and conventional blast physics assessments, live public urban population exposure metrics, and local SQLite scenario management.
+A Python desktop project combining a Tkinter GUI with an embedded CesiumJS 3D Earth map inside pywebview. It lets you select an origin and target city anywhere in the world, pick a missile system, and calculate great-circle trajectory distance, flight times, and blast effects using the Glasstone-Dolan scaling laws.
 
 ---
 
-## Architecture & Technical Frameworks
+## Layout and Features
 
-1. **Mandatory Core Desktop GUI (Tkinter)**:
-   - Built on Python's native `tkinter` framework as the primary application window.
-   - **Tkinter Native Menu Bar**: Full access to Scenario Persistence (`Ctrl+S`, `Ctrl+O`), 58-Missile Technical Catalog, Blast Physics Documentation, and System Controls.
-   - **Tkinter Command & Navigation Bar**: Quick-access controls for loading scenarios, saving missions, viewing missile inventories, and resetting simulation states.
-   - **Tkinter Viewport Container**: Embeds the hardware-accelerated 3D CesiumJS Earth viewport directly inside a native Tkinter frame with dynamic resizing.
-   - **Tkinter Live Telemetry Status Bar**: Displays real-time engine status, database connection, Wi-Fi geocoding status, and active coordinates.
-   - **Interactive Tkinter Dialogs**:
-     - `MissileCatalogDialog`: Searchable `ttk.Treeview` detailing all 58 global missile systems.
-     - `ScenarioManagerDialog`: SQLite mission explorer with load, inspect, and delete operations.
-     - `PhysicsInfoDialog`: Formal documentation of Glasstone-Dolan cube-root scaling equations.
+1. **Left Panel: Mission Controls (Tkinter)**
+   - City search for origin (launch site) and target (detonation site) via OpenStreetMap Nominatim and GeoNames datasets.
+   - Interactive map-click buttons to place or drag pins directly on the 3D globe.
+   - Filterable catalog of 58 missile systems from 10 countries (India, United States, Russia, China, France, United Kingdom, Israel, Iran, South Korea, North Korea).
+   - Speed metrics: displays both top speed and estimated average cruising speed (Mach and km/h).
+   - Warhead options: nuclear yield selection (1 to 1,000 kt) or conventional mode.
+   - Live range check that enables the launch button only when the target is within missile range.
 
-2. **Embedded 3D Geospatial Engine (PyView & CesiumJS)**:
-   - Embedded directly inside the Tkinter application container—no external browser tabs or detached HTML viewers.
-   - Complete on-map HUD command overlay with real-time range envelope calculation, Glasstone-Dolan blast rings, and animated post-impact assessment popups.
+2. **Center Viewport: 3D Earth Map (pywebview + CesiumJS)**
+   - Renders Esri satellite imagery combined with an Esri reference layer for country boundaries and place names.
+   - Fixed camera zoom limits: minimum zoom distance of 100 meters, maximum of 25,000 km.
+   - Renders the launch site pin, target pin, maximum range circle, parabolic trajectory arc, and concentric blast damage rings.
+   - Differentiates between dragging to rotate the globe and stationary clicking to drop or move a pin.
 
-3. **58-Missile Technical Database**:
-   - Comprehensive inventory of 58 strategic, intermediate, and tactical missile systems across 10 major global powers (India, United States, Russia, China, France, United Kingdom, Israel, Iran, South Korea, North Korea).
-   - Covers ICBMs, SLBMs, IRBMs, MRBMs, SRBMs, Hypersonic Glide Vehicles (HGV), and Cruise Missiles.
+3. **Right Panel: Post-Impact Assessment (Tkinter)**
+   - Flight summary with top speed, average speed, and flight times in minutes.
+   - Target population and density resolved from public datasets and cached in SQLite.
+   - Five concentric blast radii calculated from Glasstone-Dolan (1977) equations.
+   - Casualty estimations (fatalities, injuries, structures destroyed) with visual ratio bars.
+   - Missile technical notes and reference links.
 
-4. **Glasstone-Dolan Impact Physics & Atmospheric Scaling**:
-   - Computes concentric hazard radii based on cube-root scaling:
-     - **Fireball Vaporization Zone** ($~100\%$ lethality)
-     - **Heavy Blast Damage Zone** ($20\text{ psi}$ complete destruction)
-     - **Moderate Blast Damage Zone** ($5\text{ psi}$ structural collapse)
-     - **Thermal Radiation Zone** ($3\text{rd}$-degree flash burns)
-     - **Light Blast Damage Zone** ($1\text{ psi}$ shattered glass)
+---
 
-5. **Live Public Population & Wi-Fi Geocoding Engine**:
-   - Live query over Wi-Fi against OpenStreetMap Nominatim and OpenDataSoft / GeoNames datasets without requiring proprietary API tokens.
-   - Automatic real-world urban population and density retrieval cached in local SQLite database.
+## Blast Physics Model (Glasstone & Dolan, 1977)
+
+Concentric hazard radii scale with explosive yield `Y` (in kilotons TNT equivalent):
+
+- **Fireball Radius**: `r_fireball = 0.09 * Y^0.40` km
+- **Heavy Blast (20 psi)**: `r_20psi = 0.28 * Y^(1/3)` km (98% fatalities, 99% structures destroyed)
+- **Moderate Blast (5 psi)**: `r_5psi = 0.70 * Y^(1/3)` km (50% fatalities, 75% structures destroyed)
+- **Thermal Radiation (3rd-deg burns)**: `r_thermal = 1.20 * Y^0.41` km (nuclear) or `0.35 * Y^(1/3)` km (conventional)
+- **Light Blast (1 psi)**: `r_1psi = 1.90 * Y^(1/3)` km (5% fatalities, 35% injuries)
+
+Flight time is computed from great-circle distance using:
+- **Top Speed**: peak terminal Mach (`Mach * 1225` km/h)
+- **Average Speed**: `0.65 * top_speed` for ballistic missiles (Mach >= 5), `0.85 * top_speed` for cruise/tactical missiles (Mach < 5)
 
 ---
 
 ## How to Run
 
-1. **Launch the Tkinter Desktop Simulator**:
-   ```powershell
+1. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Run the desktop application**:
+   ```bash
    python app/main.py
    ```
-   *(Or double-click `run_simulator.bat`)*
+   *(Or run `run_simulator.bat` on Windows)*
 
-2. **Run Unit Test Suite**:
-   ```powershell
-   python -m unittest discover -s tests -p "test_*.py"
+3. **Run unit tests**:
+   ```bash
+   python -m unittest discover -s tests -p "test_*.py" -v
    ```
 
 ---
 
-## Directory Structure
+## Project Structure
 
 ```
-├── .env.example                # Optional configuration
-├── requirements.txt            # Python dependencies (pywebview, requests, etc.)
-├── run_simulator.bat           # 1-click desktop launcher
-├── README.md                   # Technical documentation
+├── requirements.txt            # dependencies (requests, python-dotenv, pywebview)
+├── run_simulator.bat           # batch launcher script
+├── scenarios.db                # local sqlite scenario and population cache
+├── README.md                   # project documentation
 ├── app/
-│   ├── main.py                 # Primary entry point (boots Tkinter application)
+│   ├── main.py                 # application entry point
 │   ├── ui/
-│   │   ├── main_window.py      # Tkinter Master Application & embedded PyView viewport
-│   │   └── city_search.py      # Reusable Tkinter search and autocomplete panel
+│   │   ├── main_window.py      # tkinter 3-column interface and pywebview embedding
+│   │   └── city_search.py      # city search and autocomplete panel
 │   ├── services/
-│   │   ├── webview_api.py      # Python API bridge exposed to the 3D viewport
-│   │   ├── bridge_server.py    # Local HTTP server & REST fallback
-│   │   ├── impact_physics.py   # Glasstone-Dolan blast equations & casualties
-│   │   ├── distance_service.py # Haversine great-circle calculation
-│   │   ├── mapbox_geocoding.py # Forward/reverse geocoding (OSM / GeoNames)
-│   │   └── population_service.py# Public population database engine with SQLite caching
+│   │   ├── webview_api.py      # bridge api connecting frontend and calculation services
+│   │   ├── bridge_server.py    # local http server with dynamic port allocation
+│   │   ├── impact_physics.py   # glasstone-dolan blast scaling and speed statistics
+│   │   ├── distance_service.py # great-circle haversine calculation
+│   │   ├── mapbox_geocoding.py # forward and reverse geocoding via nominatim
+│   │   └── population_service.py # population queries with local sqlite cache
 │   ├── data/
-│   │   ├── models.py           # Dataclasses & schemas
-│   │   ├── database.py         # SQLite scenario persistence
-│   │   └── reference_data.json # 58-Missile technical database
+│   │   ├── models.py           # dataclasses for places and scenarios
+│   │   ├── database.py         # sqlite scenario storage with auto-migration
+│   │   └── reference_data.json # 58 missile systems dataset
 │   └── visualization/
 │       └── globe/
-│           └── index.html      # 3D CesiumJS Earth globe with on-map HUD overlays
+│           └── index.html      # cesiumjs 3d map viewport
 └── tests/
-    └── test_all.py             # 8-test unit verification suite
+    └── test_all.py             # test suite covering database, physics, and api
 ```

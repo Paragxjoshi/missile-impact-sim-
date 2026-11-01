@@ -8,9 +8,12 @@ from app.data.models import PlaceCandidate
 
 load_dotenv()
 
+HTTP_TIMEOUT = 5
+REV_TIMEOUT = 4
+
 
 def clean_label(text: str) -> str:
-    """Normalizes Unicode text and transliterates accented characters (e.g. Sonīpat -> Sonipat)."""
+    """normalizes accented unicode text to ascii"""
     if not text:
         return ""
     parts = []
@@ -24,12 +27,12 @@ def clean_label(text: str) -> str:
 
 
 class GeocodingError(Exception):
-    """Custom exception for geocoding and coordinate validation errors."""
+    """exception for geocoding and coordinate validation errors"""
     pass
 
 
 def validate_lon_lat(longitude: float, latitude: float) -> None:
-    """Validates that longitude is in [-180, 180] and latitude is in [-90, 90]."""
+    """checks that coordinates are valid floats within bounds"""
     if not isinstance(longitude, (int, float)) or not isinstance(latitude, (int, float)):
         raise GeocodingError("Coordinates must be numeric values.")
     if not (-180.0 <= float(longitude) <= 180.0):
@@ -38,7 +41,7 @@ def validate_lon_lat(longitude: float, latitude: float) -> None:
         raise GeocodingError(f"Invalid latitude ({latitude}). Must be between -90 and 90.")
 
 
-# Built-in offline fallback list for major world cities
+# offline fallback list for major world cities
 FALLBACK_CITIES = [
     {"label": "New Delhi, India", "lon": 77.2090, "lat": 28.6139, "id": "fallback-delhi"},
     {"label": "Sonipat (Sonepat), Haryana, India", "lon": 77.0234, "lat": 28.9954, "id": "fallback-sonipat"},
@@ -61,13 +64,7 @@ FALLBACK_CITIES = [
 
 
 class MapboxGeocodingService:
-    """
-    Robust global geocoding engine supporting:
-    1. Mapbox v6 API (if access token configured)
-    2. OpenStreetMap Nominatim Public API (free, open, global coverage of all towns & cities)
-    3. OpenDataSoft / GeoNames Global Cities Dataset
-    4. Offline city catalog fallback
-    """
+    """geocoding search across mapbox, osm nominatim, and opendatasoft"""
 
     MAPBOX_FORWARD_URL = "https://api.mapbox.com/search/geocode/v6/forward"
     MAPBOX_REVERSE_URL = "https://api.mapbox.com/search/geocode/v6/reverse"
@@ -85,10 +82,7 @@ class MapboxGeocodingService:
         return bool(self.access_token and self.access_token != "pk.your_mapbox_token_here")
 
     def search_city(self, query: str, limit: int = 6) -> List[PlaceCandidate]:
-        """
-        Searches for cities/towns matching the given query globally over Wi-Fi.
-        Returns a list of validated PlaceCandidate objects for dropdown selection.
-        """
+        """searches cities using available providers"""
         cleaned_query = query.strip()
         if not cleaned_query:
             raise GeocodingError("Please enter a city name before searching.")
@@ -105,7 +99,7 @@ class MapboxGeocodingService:
                 seen_labels.add(label_key)
                 candidates.append(c)
 
-        # 1. Try Mapbox if valid token is provided
+        # mapbox forward lookup if token available
         if self._has_valid_token():
             try:
                 params = {
@@ -114,7 +108,7 @@ class MapboxGeocodingService:
                     "limit": limit,
                     "access_token": self.access_token,
                 }
-                response = requests.get(self.MAPBOX_FORWARD_URL, params=params, timeout=5)
+                response = requests.get(self.MAPBOX_FORWARD_URL, params=params, timeout=HTTP_TIMEOUT)
                 if response.status_code == 200:
                     data = response.json()
                     for feature in data.get("features", []):
@@ -139,10 +133,10 @@ class MapboxGeocodingService:
                                     attribution="Mapbox",
                                 )
                             )
-            except Exception:
-                pass
+            except (requests.RequestException, ValueError, KeyError) as err:
+                print(f"mapbox search error: {err}")
 
-        # 2. Query OpenStreetMap Nominatim (Free, Open, global coverage of every town/district)
+        # osm nominatim lookup
         if len(candidates) < limit:
             try:
                 headers = {"User-Agent": "MissileImpactSimulator/2.0", "Accept-Language": "en"}
@@ -152,7 +146,7 @@ class MapboxGeocodingService:
                     "limit": limit,
                     "addressdetails": 1,
                 }
-                response = requests.get(self.OSM_SEARCH_URL, params=params, headers=headers, timeout=5)
+                response = requests.get(self.OSM_SEARCH_URL, params=params, headers=headers, timeout=HTTP_TIMEOUT)
                 if response.status_code == 200:
                     osm_list = response.json()
                     for item in osm_list:
@@ -174,12 +168,11 @@ class MapboxGeocodingService:
                         country = addr.get("country", "")
 
                         parts = [clean_label(p) for p in [name, state, country] if p and clean_label(p).strip()]
-                        # Deduplicate contiguous identical parts (e.g., ['Tokyo', 'Tokyo', 'Japan'] -> ['Tokyo', 'Japan'])
                         deduped = []
                         for part in parts:
                             if not deduped or deduped[-1].lower() != part.lower():
                                 deduped.append(part)
-                        
+
                         raw_label = ", ".join(deduped) if len(deduped) >= 2 else clean_label(item.get("display_name", cleaned_query))
                         label = clean_label(raw_label).strip(", ")
                         if not label:
@@ -195,15 +188,15 @@ class MapboxGeocodingService:
                                 attribution="OpenStreetMap",
                             )
                         )
-            except Exception:
-                pass
+            except (requests.RequestException, ValueError, KeyError) as err:
+                print(f"osm search error: {err}")
 
-        # 3. Query OpenDataSoft / GeoNames Global Cities Dataset (population >= 1,000)
+        # opendatasoft geonames lookup
         if len(candidates) < limit:
             try:
                 headers = {"User-Agent": "MissileImpactSimulator/2.0", "Accept-Language": "en"}
                 url = f"{self.OPENDATASOFT_URL}?where=search(name,%20%22{urllib.parse.quote(cleaned_query)}%22)&limit={limit}"
-                response = requests.get(url, headers=headers, timeout=4)
+                response = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
                 if response.status_code == 200:
                     records = response.json().get("results", [])
                     for rec in records:
@@ -226,10 +219,10 @@ class MapboxGeocodingService:
                                     attribution="GeoNames",
                                 )
                             )
-            except Exception:
-                pass
+            except (requests.RequestException, ValueError, KeyError) as err:
+                print(f"geonames search error: {err}")
 
-        # 4. Check built-in offline list
+        # offline catalog fallback
         if not candidates:
             for c in FALLBACK_CITIES:
                 if cleaned_query.lower() in c["label"].lower():
@@ -246,16 +239,16 @@ class MapboxGeocodingService:
         if not candidates:
             raise GeocodingError(
                 f"No locations found matching '{cleaned_query}'.\n"
-                "Please verify the city spelling or click directly on the 3D globe."
+                "Please check spelling or click directly on the globe."
             )
 
         return candidates[:limit]
 
     def reverse_geocode(self, longitude: float, latitude: float) -> PlaceCandidate:
-        """Resolves clicked/dragged [longitude, latitude] into a real city/town label."""
+        """looks up place name from longitude and latitude"""
         validate_lon_lat(longitude, latitude)
 
-        # 1. Try Mapbox if valid token is provided
+        # mapbox reverse lookup if token configured
         if self._has_valid_token():
             try:
                 params = {
@@ -265,12 +258,12 @@ class MapboxGeocodingService:
                     "limit": 1,
                     "access_token": self.access_token,
                 }
-                response = requests.get(self.MAPBOX_REVERSE_URL, params=params, timeout=4)
+                response = requests.get(self.MAPBOX_REVERSE_URL, params=params, timeout=REV_TIMEOUT)
                 if response.status_code == 200:
                     features = response.json().get("features", [])
                     if features:
                         props = features[0].get("properties", {})
-                        label = (
+                        label = clean_label(
                             props.get("full_address")
                             or props.get("place_formatted")
                             or props.get("name")
@@ -284,10 +277,10 @@ class MapboxGeocodingService:
                                 provider_place_id=place_id,
                                 attribution="Mapbox",
                             )
-            except Exception:
-                pass
+            except (requests.RequestException, ValueError, KeyError) as err:
+                print(f"mapbox reverse error: {err}")
 
-        # 2. Query OpenStreetMap Nominatim reverse geocode over Wi-Fi
+        # osm nominatim reverse lookup
         try:
             headers = {"User-Agent": "MissileImpactSimulator/2.0"}
             params = {
@@ -296,7 +289,7 @@ class MapboxGeocodingService:
                 "lon": longitude,
                 "addressdetails": 1,
             }
-            response = requests.get(self.OSM_REVERSE_URL, params=params, headers=headers, timeout=4)
+            response = requests.get(self.OSM_REVERSE_URL, params=params, headers=headers, timeout=REV_TIMEOUT)
             if response.status_code == 200:
                 item = response.json()
                 addr = item.get("address", {})
@@ -326,8 +319,8 @@ class MapboxGeocodingService:
                         provider_place_id=f"osm-{item.get('place_id', 'pin')}",
                         attribution="OpenStreetMap",
                     )
-        except Exception:
-            pass
+        except (requests.RequestException, ValueError, KeyError) as err:
+            print(f"osm reverse error: {err}")
 
         return PlaceCandidate(
             label=f"Point ({latitude:.3f}°, {longitude:.3f}°)",

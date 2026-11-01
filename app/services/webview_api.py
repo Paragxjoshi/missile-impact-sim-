@@ -1,6 +1,8 @@
 import json
+import sqlite3
 from typing import Dict, Any, List, Optional
-from app.data.models import PlaceCandidate, Scenario
+import requests
+from app.data.models import Scenario
 from app.data.database import ScenarioDatabase
 from app.services.mapbox_geocoding import MapboxGeocodingService, GeocodingError
 from app.services.distance_service import calculate_great_circle_distance_km
@@ -9,7 +11,7 @@ from app.services.population_service import PopulationService
 
 
 class SimulatorApi:
-    """Python API exposed directly to JavaScript in pywebview."""
+    """bridges frontend actions with backend calculation services"""
 
     def __init__(self):
         self.geocoding_service = MapboxGeocodingService()
@@ -37,10 +39,11 @@ class SimulatorApi:
                     for c in candidates
                 ],
             }
-        except GeocodingError as e:
-            return {"success": False, "error": str(e), "candidates": []}
-        except Exception as e:
-            return {"success": False, "error": f"Search failed: {e}", "candidates": []}
+        except GeocodingError as err:
+            return {"success": False, "error": str(err), "candidates": []}
+        except (requests.RequestException, OSError, ValueError) as err:
+            print(f"search city error: {err}")
+            return {"success": False, "error": f"Search failed: {err}", "candidates": []}
 
     def reverse_geocode(self, longitude: float, latitude: float) -> Dict[str, Any]:
         try:
@@ -52,9 +55,10 @@ class SimulatorApi:
                 "provider_place_id": c.provider_place_id,
                 "attribution": c.attribution,
             }
-        except Exception as e:
+        except (GeocodingError, requests.RequestException, OSError) as err:
+            print(f"reverse geocode fallback used: {err}")
             return {
-                "label": f"Coordinates ({latitude:.3f}°, {longitude:.3f}°)",
+                "label": f"Coordinates ({latitude:.3f}, {longitude:.3f})",
                 "longitude": longitude,
                 "latitude": latitude,
                 "provider_place_id": "manual-pin",
@@ -96,11 +100,11 @@ class SimulatorApi:
                 "distance_km": dist_km,
             }
 
-        # Automatically look up real-world population and density via open database over Wi-Fi
+        # resolve target population and density
         pop_info = self.population_service.get_population_and_density(
             dest["longitude"], dest["latitude"], dest.get("label", "")
         )
-        density = float(pop_info["density_per_km2"])
+        density = float(pop_info["density_per_km2"]) if pop_density_per_km2 is None else float(pop_density_per_km2)
 
         impact = compute_impact_effects(
             missile=missile,
@@ -142,15 +146,16 @@ class SimulatorApi:
                 destination_city_label=dest_label,
                 destination_longitude=float(dest_lon),
                 destination_latitude=float(dest_lat),
-                selected_reference_record_id=missile_id,
-                hypothetical_assessment_zone_parameters=json.dumps(
+                missile_id=missile_id,
+                params=json.dumps(
                     {"is_nuclear": is_nuclear, "yield_kt": yield_kt, "density": density or 0.0}
                 ),
             )
             scenario_id = self.db.save_scenario(scenario)
             return {"success": True, "scenario_id": scenario_id, "message": f"Scenario '{scenario_name}' saved!"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        except (sqlite3.Error, ValueError) as err:
+            print(f"save scenario error: {err}")
+            return {"success": False, "error": str(err)}
 
     def list_scenarios(self) -> List[Dict[str, Any]]:
         scenarios = self.db.list_scenarios()
@@ -166,8 +171,8 @@ class SimulatorApi:
                     "destination_city_label": s.destination_city_label,
                     "destination_longitude": s.destination_longitude,
                     "destination_latitude": s.destination_latitude,
-                    "selected_reference_record_id": s.selected_reference_record_id,
-                    "hypothetical_assessment_zone_parameters": s.hypothetical_assessment_zone_parameters,
+                    "missile_id": s.missile_id,
+                    "params": s.params,
                     "created_at": s.created_at,
                 }
             )

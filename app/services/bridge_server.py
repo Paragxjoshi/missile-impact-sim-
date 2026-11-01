@@ -9,9 +9,9 @@ GLOBE_DIR = Path(__file__).resolve().parent.parent / "visualization" / "globe"
 
 
 class GlobeBridgeServer:
-    """Provides HTTP serving for the 3D Globe and REST endpoints for Python API interaction."""
+    """local http server serving globe static files and api endpoints"""
 
-    def __init__(self, on_globe_pick: Optional[Callable[[str, float, float], None]] = None, port: int = 8765):
+    def __init__(self, on_globe_pick: Optional[Callable[[str, float, float], None]] = None, port: int = 0):
         self.port = port
         self.on_globe_pick = on_globe_pick
         self.api = SimulatorApi()
@@ -25,6 +25,8 @@ class GlobeBridgeServer:
             "range_message": "",
             "launched": False,
             "impact": None,
+            "pick_mode": "destination",
+            "fly_to": None,
         }
         self._server: Optional[ThreadingHTTPServer] = None
 
@@ -45,7 +47,7 @@ class GlobeBridgeServer:
                 super().__init__(*args, directory=str(GLOBE_DIR), **kwargs)
 
             def log_message(self, format: str, *args: Any) -> None:
-                pass  # Keep console clean
+                pass  # suppress request logs to keep terminal quiet
 
             def do_GET(self) -> None:
                 if self.path.startswith("/api/state"):
@@ -63,17 +65,15 @@ class GlobeBridgeServer:
                 raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
                 try:
                     data = json.loads(raw)
-                except Exception:
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     data = {}
 
-                # REST API fallback endpoints
                 if self.path.startswith("/api/get_missiles"):
                     res = bridge.api.get_missiles()
                     self._send_json(res)
                     return
 
                 if self.path.startswith("/api/search_city"):
-                    # data is args list [query]
                     q = data[0] if isinstance(data, list) and data else str(data.get("query", ""))
                     res = bridge.api.search_city(q)
                     self._send_json(res)
@@ -145,6 +145,12 @@ class GlobeBridgeServer:
                     self._send_json(res)
                     return
 
+                if self.path.startswith("/api/pick_mode"):
+                    mode = str(data.get("mode", "destination"))
+                    bridge.update_state(pick_mode=mode)
+                    self._send_json({"status": "ok", "pick_mode": mode})
+                    return
+
                 if self.path.startswith("/api/pick"):
                     role = str(data.get("role", "destination"))
                     lon = float(data.get("longitude", 0.0))
@@ -169,6 +175,8 @@ class GlobeBridgeServer:
             allow_reuse_address = True
 
         self._server = ReusableThreadingServer(("127.0.0.1", self.port), Handler)
+        # assign dynamic port allocated by the os
+        self.port = int(self._server.server_address[1])
         thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         thread.start()
         return f"http://127.0.0.1:{self.port}/index.html"
