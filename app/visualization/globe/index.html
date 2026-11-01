@@ -212,6 +212,23 @@
       return positions;
     }
 
+    // calculates spherical circle boundary points for missile range
+    function computeCirclePoints(centerLon, centerLat, radiusKm, numPoints = 72) {
+      const points = [];
+      const R = 6371.0;
+      const radLat = Cesium.Math.toRadians(centerLat);
+      const radLon = Cesium.Math.toRadians(centerLon);
+      const dByR = radiusKm / R;
+
+      for (let i = 0; i <= numPoints; i++) {
+        const bearing = (i * 360.0 / numPoints) * Math.PI / 180.0;
+        const lat = Math.asin(Math.sin(radLat) * Math.cos(dByR) + Math.cos(radLat) * Math.sin(dByR) * Math.cos(bearing));
+        const lon = radLon + Math.atan2(Math.sin(bearing) * Math.sin(dByR) * Math.cos(radLat), Math.cos(dByR) - Math.sin(radLat) * Math.sin(lat));
+        points.push(Cesium.Cartesian3.fromRadians(lon, lat, 100.0));
+      }
+      return points;
+    }
+
     function renderState(state) {
       // 1. origin pin
       if (state.origin && typeof state.origin.longitude === "number") {
@@ -277,10 +294,12 @@
         viewer.entities.removeById("dest_pin");
       }
 
-      // 3. max range circle
-      if (state.origin && state.missile && state.missile.max_range_km) {
-        const radiusMeters = state.missile.max_range_km * 1000.0;
+      // 3. max range circle and glowing perimeter border
+      if (state.origin && typeof state.origin.longitude === "number" && state.missile && state.missile.max_range_km) {
+        const radiusKm = Math.min(Number(state.missile.max_range_km) || 0, 9500);
+        const radiusMeters = radiusKm * 1000.0;
         const pos = Cesium.Cartesian3.fromDegrees(state.origin.longitude, state.origin.latitude, 0);
+
         let rangeEntity = viewer.entities.getById("range_circle");
         if (!rangeEntity) {
           rangeEntity = viewer.entities.add({
@@ -289,10 +308,11 @@
             ellipse: {
               semiMajorAxis: radiusMeters,
               semiMinorAxis: radiusMeters,
-              material: Cesium.Color.fromCssColorString("#38bdf8").withAlpha(0.06),
+              material: Cesium.Color.fromCssColorString("#38bdf8").withAlpha(0.14),
               outline: true,
-              outlineColor: Cesium.Color.fromCssColorString("#38bdf8").withAlpha(0.65),
-              outlineWidth: 2
+              outlineColor: Cesium.Color.CYAN,
+              outlineWidth: 2,
+              height: 0
             }
           });
         } else {
@@ -300,8 +320,28 @@
           rangeEntity.ellipse.semiMajorAxis = radiusMeters;
           rangeEntity.ellipse.semiMinorAxis = radiusMeters;
         }
+
+        const circlePoints = computeCirclePoints(state.origin.longitude, state.origin.latitude, radiusKm);
+        let borderEntity = viewer.entities.getById("range_border_line");
+        if (!borderEntity) {
+          borderEntity = viewer.entities.add({
+            id: "range_border_line",
+            polyline: {
+              positions: circlePoints,
+              width: 3,
+              material: new Cesium.PolylineGlowMaterialProperty({
+                glowPower: 0.25,
+                color: Cesium.Color.fromCssColorString("#38bdf8")
+              }),
+              clampToGround: true
+            }
+          });
+        } else {
+          borderEntity.polyline.positions = circlePoints;
+        }
       } else {
         viewer.entities.removeById("range_circle");
+        viewer.entities.removeById("range_border_line");
       }
 
       // 4. trajectory line

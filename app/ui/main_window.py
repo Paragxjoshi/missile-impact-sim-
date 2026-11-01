@@ -738,6 +738,8 @@ class MissileSimulatorApp(tk.Tk):
         self._filter_missiles()
         # select agni_v by default if present
         self._select_missile_by_id("agni_v")
+        if self.bridge and self.selected_missile:
+            self.bridge.update_state(missile=self.selected_missile)
 
     def _filter_missiles(self) -> None:
         c_filter = self.country_filter_var.get()
@@ -861,6 +863,7 @@ class MissileSimulatorApp(tk.Tk):
         if cand and self.bridge:
             self.bridge.update_state(
                 origin={"label": cand.label, "longitude": cand.longitude, "latitude": cand.latitude},
+                missile=self.selected_missile,
                 fly_to={"lon": cand.longitude, "lat": cand.latitude, "height": 450000.0, "fly_id": id(cand)},
             )
 
@@ -877,6 +880,7 @@ class MissileSimulatorApp(tk.Tk):
             if self.bridge:
                 self.bridge.update_state(
                     destination={"label": cand.label, "longitude": cand.longitude, "latitude": cand.latitude},
+                    missile=self.selected_missile,
                     fly_to={"lon": cand.longitude, "lat": cand.latitude, "height": 350000.0, "fly_id": id(cand)},
                 )
         else:
@@ -932,13 +936,37 @@ class MissileSimulatorApp(tk.Tk):
         self._update_range_and_pins()
 
     def _update_range_and_pins(self) -> None:
+        o_data = (
+            {"label": self.origin_candidate.label, "longitude": self.origin_candidate.longitude, "latitude": self.origin_candidate.latitude}
+            if self.origin_candidate
+            else None
+        )
+        d_data = (
+            {"label": self.dest_candidate.label, "longitude": self.dest_candidate.longitude, "latitude": self.dest_candidate.latitude}
+            if self.dest_candidate
+            else None
+        )
+
         if not self.origin_candidate or not self.dest_candidate:
             self.current_distance_km = 0.0
             self.is_in_range = False
-            self.range_status_var.set("Select both origin and target to calculate range")
+            if not self.origin_candidate and not self.dest_candidate:
+                self.range_status_var.set("Select origin and target to calculate range")
+            elif not self.origin_candidate:
+                self.range_status_var.set("Select an origin point to calculate range")
+            else:
+                self.range_status_var.set("Select a target point to calculate range")
             self.range_status_lbl.config(fg=COLOR_MUTED)
             self.launch_btn.config(state="disabled")
             self._update_spec_card()
+            if self.bridge:
+                self.bridge.update_state(
+                    origin=o_data,
+                    destination=d_data,
+                    missile=self.selected_missile,
+                    in_range=False,
+                    range_message=self.range_status_var.get(),
+                )
             return
 
         o_lon, o_lat = self.origin_candidate.longitude, self.origin_candidate.latitude
@@ -952,6 +980,14 @@ class MissileSimulatorApp(tk.Tk):
             self.range_status_var.set("No missile selected")
             self.range_status_lbl.config(fg=COLOR_MUTED)
             self.launch_btn.config(state="disabled")
+            if self.bridge:
+                self.bridge.update_state(
+                    origin=o_data,
+                    destination=d_data,
+                    missile=None,
+                    in_range=False,
+                    range_message="No missile selected",
+                )
             return
 
         range_check = check_within_range(self.current_distance_km, self.selected_missile)
@@ -969,8 +1005,8 @@ class MissileSimulatorApp(tk.Tk):
 
         if self.bridge:
             self.bridge.update_state(
-                origin={"label": self.origin_candidate.label, "longitude": o_lon, "latitude": o_lat},
-                destination={"label": self.dest_candidate.label, "longitude": d_lon, "latitude": d_lat},
+                origin=o_data,
+                destination=d_data,
                 missile=self.selected_missile,
                 in_range=self.is_in_range,
                 range_message=self.range_status_var.get(),
