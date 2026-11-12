@@ -36,12 +36,6 @@ python app/main.py
 
 On Windows you can also double-click `run_simulator.bat`.
 
-Tests:
-
-```bash
-python -m unittest discover -s tests -p "test_*.py" -v
-```
-
 ## How the numbers work
 
 Blast radii come from the Glasstone & Dolan (1977) scaling laws, where `Y` is the warhead yield in kilotons of TNT:
@@ -82,7 +76,6 @@ The Tkinter side and the globe page don't call each other directly. Python keeps
 │   │   └── geocoding.py              # city search, reverse geocoding, population lookup
 │   ├── data/reference_data.json      # the 8 missiles (range, yield)
 │   └── visualization/globe/index.html  # globe, pins, flight animation, blast zones
-├── tests/test_all.py
 ├── .env.example
 ├── requirements.txt
 └── run_simulator.bat
