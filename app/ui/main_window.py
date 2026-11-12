@@ -85,10 +85,10 @@ class MissileSimulatorApp(tk.Tk):
         left.pack_propagate(False)
         self._build_controls(left)
 
-        right = tk.Frame(self, bg=PANEL, width=px(340))
-        right.pack(side="right", fill="y")
-        right.pack_propagate(False)
-        self.results = tk.Frame(right, bg=PANEL)
+        self.right = tk.Frame(self, bg=PANEL, width=px(340))
+        self.right.pack_propagate(False)  # hidden until a missile lands
+        self._results_job = None
+        self.results = tk.Frame(self.right, bg=PANEL)
         self.results.pack(fill="both", expand=True, padx=px(22), pady=px(22))
 
         self.viewport = tk.Frame(self, bg=BG)
@@ -283,6 +283,9 @@ class MissileSimulatorApp(tk.Tk):
             fly_to=self._fly(d.longitude, d.latitude, max(impact["radii_km"]["light_blast_1psi_km"] * 3500.0, 150000.0)),
         )
         self._render_results(res)
+        if self._results_job:
+            self.after_cancel(self._results_job)
+        self._results_job = self.after(3000, self._reveal_results)  # after the missile lands on the globe
 
     def _clear_results(self) -> None:
         for w in self.results.winfo_children():
@@ -290,8 +293,14 @@ class MissileSimulatorApp(tk.Tk):
 
     def _show_placeholder(self) -> None:
         self._clear_results()
-        label(self.results, "Choose a launch site, a target and a missile, then launch.",
-              fg=MUTED, font=("Segoe UI", 10), wraplength=px(290), justify="left").pack(fill="x")
+        if self._results_job:
+            self.after_cancel(self._results_job)
+            self._results_job = None
+        self.right.pack_forget()
+
+    def _reveal_results(self) -> None:
+        self._results_job = None
+        self.right.pack(side="right", fill="y", before=self.viewport)
 
     def _render_results(self, res: Dict[str, Any]) -> None:
         self._clear_results()
@@ -302,15 +311,18 @@ class MissileSimulatorApp(tk.Tk):
             label(self.results, title, fg=MUTED, font=FONT_LABEL).pack(fill="x")
             label(self.results, f"{value:,}", font=FONT_BIG, fg=ACCENT if title == "FATALITIES" else TEXT).pack(fill="x", pady=(0, px(14)))
 
-        label(self.results, "EFFECTS", fg=MUTED, font=FONT_LABEL).pack(fill="x", pady=(px(8), px(6)))
-        for name, key in (("Fireball", "fireball_km"), ("Heavy blast  ·  20 psi", "heavy_blast_20psi_km"),
-                          ("Moderate blast  ·  5 psi", "moderate_blast_5psi_km"), ("3rd-degree burns", "thermal_3rd_deg_km"),
-                          ("Light blast  ·  1 psi", "light_blast_1psi_km")):
+        o, d, m = self.places["origin"], self.places["destination"], self.missile
+        dist = calculate_great_circle_distance_km(o.longitude, o.latitude, d.longitude, d.latitude)
+        outer = max(radii["light_blast_1psi_km"], radii["thermal_3rd_deg_km"])
+        label(self.results, "STRIKE", fg=MUTED, font=FONT_LABEL).pack(fill="x", pady=(px(8), px(6)))
+        for name, val in (("Distance", f"{dist:,.0f} km"),
+                          ("Range used", f"{dist / m['max_range_km'] * 100:.0f}%"),
+                          ("Warhead", f"{res['impact']['yield_kt']:,.0f} kt"),
+                          ("Area affected", f"{3.14159 * outer ** 2:,.0f} km²")):
             row = tk.Frame(self.results, bg=PANEL)
             row.pack(fill="x", pady=px(2))
             label(row, name, bg=PANEL).pack(side="left")
-            km = radii[key]
-            tk.Label(row, text=f"{km * 1000:,.0f} m" if km < 1 else f"{km:,.1f} km", fg=MUTED, bg=PANEL, font=FONT).pack(side="right")
+            tk.Label(row, text=val, fg=MUTED, bg=PANEL, font=FONT).pack(side="right")
 
         label(self.results, "TARGET AREA", fg=MUTED, font=FONT_LABEL).pack(fill="x", pady=(px(22), px(6)))
         label(self.results, f"Population  ·  {pop.get('population', 0):,}").pack(fill="x")
