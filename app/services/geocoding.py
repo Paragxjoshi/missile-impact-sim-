@@ -1,18 +1,28 @@
 import urllib.parse
 import unicodedata
 import requests
-from app.data.database import PlaceCandidate
 import json
 import sqlite3
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
 
 
+@dataclass
+class PlaceCandidate:
+    """geocoding search result"""
+    label: str
+    longitude: float
+    latitude: float
+    provider_place_id: str
+    attribution: str = "OpenStreetMap"
+
+
 # ---- population and density lookup ----
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "scenarios.db"
+DB_PATH = Path(__file__).resolve().parent.parent.parent / "cache.db"
 
 POP_HTTP_TIMEOUT = 4
 CACHE_RADIUS_DEG = 0.04  # ~4 km precision so neighboring towns resolve separately

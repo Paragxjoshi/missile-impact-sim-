@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -43,54 +44,20 @@ class SimulatorApi:
                 "attribution": "Manual Pin",
             }
 
-    def get_population(self, longitude: float, latitude: float, label: str = "") -> Dict[str, Any]:
-        return self.population_service.get_population_and_density(longitude, latitude, label)
-
-    def simulate_launch(
-        self,
-        origin: Dict[str, Any],
-        dest: Dict[str, Any],
-        missile_id: str,
-        is_nuclear: bool,
-        nuclear_yield_kt: float,
-        pop_density_per_km2: Optional[float] = None,
-    ) -> Dict[str, Any]:
+    def simulate_launch(self, origin: Dict[str, Any], dest: Dict[str, Any], missile_id: str) -> Dict[str, Any]:
         missile = self.missile_map.get(missile_id, self.missiles[0])
         dist_km = calculate_great_circle_distance_km(
             origin["longitude"], origin["latitude"], dest["longitude"], dest["latitude"]
         )
-        range_check = check_within_range(dist_km, missile)
+        if not check_within_range(dist_km, missile):
+            return {"success": False, "error": f"Out of range: {dist_km:,.0f} km exceeds {missile['name']} range of {missile['max_range_km']:,} km."}
 
-        if not range_check["in_range"]:
-            return {
-                "success": False,
-                "in_range": False,
-                "error": range_check["reason"],
-                "distance_km": dist_km,
-            }
-
-        # resolve target population and density
         pop_info = self.population_service.get_population_and_density(
             dest["longitude"], dest["latitude"], dest.get("label", "")
         )
-        density = float(pop_info["density_per_km2"]) if pop_density_per_km2 is None else float(pop_density_per_km2)
+        impact = compute_impact_effects(missile, float(pop_info["density_per_km2"]))
+        return {"success": True, "impact": impact, "population_info": pop_info}
 
-        impact = compute_impact_effects(
-            missile=missile,
-            distance_km=dist_km,
-            is_nuclear=is_nuclear,
-            nuclear_yield_kt=float(nuclear_yield_kt),
-            pop_density_per_km2=density,
-        )
-
-        return {
-            "success": True,
-            "in_range": True,
-            "distance_km": dist_km,
-            "missile": missile,
-            "impact": impact,
-            "population_info": pop_info,
-        }
 
 # ---- local http server ----
 GLOBE_DIR = Path(__file__).resolve().parent.parent / "visualization" / "globe"
@@ -115,6 +82,7 @@ class GlobeBridgeServer:
             "impact": None,
             "pick_mode": "origin",
             "fly_to": None,
+            "mapbox_token": os.environ.get("MAPBOX_TOKEN", ""),
         }
         self._server: Optional[ThreadingHTTPServer] = None
 

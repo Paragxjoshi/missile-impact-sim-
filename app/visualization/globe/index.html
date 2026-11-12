@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Missile Impact Simulator</title>
-  <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
-  <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.css" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body, #cesiumContainer {
+    html, body, #map {
       width: 100%;
       height: 100%;
       overflow: hidden;
@@ -18,7 +18,7 @@
     }
     .status-pill {
       position: absolute;
-      bottom: 44px; /* clear of the cesium credit line */
+      bottom: 44px; /* clear of the map credit line */
       left: 16px;
       z-index: 50;
       background: rgba(0, 0, 0, 0.80);
@@ -91,7 +91,7 @@
   </style>
 </head>
 <body>
-  <div id="cesiumContainer"></div>
+  <div id="map"></div>
   <div id="statusPill" class="status-pill">
     <div class="pill-title" id="pillModeText">Map Click Mode: Launch site</div>
     <div class="pill-sub">Click globe to place pin | Drag pin to move | Drag globe to rotate</div>
@@ -101,164 +101,40 @@
     <div id="legendRows"></div>
   </div>
 
-  <script>
-    Cesium.Ion.defaultAccessToken = "";
-
-    // create esri satellite base layer.
-    // server.arcgisonline.com is a separate (faster) host from the labels layer, so the two
-    // don't compete for the browser's per-host connection limit.
-    // blankTile=false makes esri return 404 instead of a "map data not yet available" image,
-    // so cesium keeps showing the sharpest real tile it has.
-    const esriBaseProvider = new Cesium.UrlTemplateImageryProvider({
-      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?blankTile=false",
-      maximumLevel: 19,
-      credit: "Esri World Imagery"
-    });
-
-    // create esri boundaries, places, and country borders overlay.
-    // this layer has no tiles past level 17; cesium stretches level 17 when zoomed further.
-    const esriBoundariesProvider = new Cesium.UrlTemplateImageryProvider({
-      url: "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-      maximumLevel: 17,
-      credit: "Esri Boundaries and Places"
-    });
-
-    // cesium never retries a failed tile by default, so one slow response leaves a
-    // permanent blurry hole. retry timeouts/network errors a few times; skip real 404s.
-    function retryFailedTiles(provider) {
-      provider.errorEvent.addEventListener((err) => {
-        const status = err.error && err.error.statusCode;
-        if (status === 404) return;
-        if (err.timesRetried < 3) err.retry = true;
-      });
+  <script type="module">
+    const state0 = await (await fetch("/api/state", { cache: "no-store" })).json();
+    if (!state0.mapbox_token) {
+      document.getElementById("pillModeText").innerText = "Set the MAPBOX_TOKEN environment variable and restart";
     }
-    retryFailedTiles(esriBaseProvider);
-    retryFailedTiles(esriBoundariesProvider);
+    mapboxgl.accessToken = state0.mapbox_token || "";
 
-    let viewer;
-    try {
-      viewer = new Cesium.Viewer("cesiumContainer", {
-        baseLayer: new Cesium.ImageryLayer(esriBaseProvider),
-        baseLayerPicker: false,
-        geocoder: false,
-        homeButton: false,
-        infoBox: false,
-        sceneModePicker: false,
-        selectionIndicator: false,
-        timeline: false,
-        navigationHelpButton: false,
-        animation: false,
-        fullscreenButton: false,
-      });
-    } catch (e) {
-      viewer = new Cesium.Viewer("cesiumContainer", {
-        imageryProvider: esriBaseProvider,
-        baseLayerPicker: false,
-        geocoder: false,
-        homeButton: false,
-        infoBox: false,
-        sceneModePicker: false,
-        selectionIndicator: false,
-        timeline: false,
-        navigationHelpButton: false,
-        animation: false,
-        fullscreenButton: false,
-      });
-    }
-
-    // add boundaries and places reference overlay on top of satellite imagery
-    viewer.imageryLayers.add(new Cesium.ImageryLayer(esriBoundariesProvider));
-
-    viewer.resolutionScale = window.devicePixelRatio || 1.0;
-    viewer.scene.globe.showGroundAtmosphere = false;
-    viewer.scene.globe.enableLighting = false;
-
-    // smoother panning: keep more tiles in memory (default 100) so returning to an area
-    // doesn't re-download it, and load neighbouring tiles before they scroll into view
-    viewer.scene.globe.tileCacheSize = 1000;
-    viewer.scene.globe.preloadSiblings = true;
-
-    // hard zoom distance limits (100m minimum, 25,000km maximum)
-    viewer.scene.screenSpaceCameraController.minimumZoomDistance = 100.0;
-    viewer.scene.screenSpaceCameraController.maximumZoomDistance = 25000000.0;
+    const map = new mapboxgl.Map({
+      container: "map",
+      style: "mapbox://styles/nbhjftd/cmwd3pzmm009601r50rex6p2b",
+      projection: "globe",
+      center: [0, 20],
+      zoom: 1.3,
+      minZoom: 1,
+      maxZoom: 20,
+    });
+    await new Promise((resolve) => map.on("style.load", resolve));
+    map.setFog({});
 
     let currentPickMode = "origin";
     let lastVersion = -1;
     let lastFlyId = -1;
 
-    // track mouse clicks vs drags
-    let isLeftDown = false;
-    let startScreenPos = null;
-    let draggedPin = null;
-    let hasMovedPastThreshold = false;
+    const EMPTY = { type: "FeatureCollection", features: [] };
+    const line = (coords) => ({ type: "Feature", geometry: { type: "LineString", coordinates: coords } });
+    const polygon = (ring, props) => ({ type: "Feature", properties: props || {}, geometry: { type: "Polygon", coordinates: [ring] } });
 
-    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-
-    handler.setInputAction((movement) => {
-      isLeftDown = true;
-      startScreenPos = Cesium.Cartesian2.clone(movement.position);
-      hasMovedPastThreshold = false;
-      draggedPin = null;
-
-      const picked = viewer.scene.pick(movement.position);
-      if (Cesium.defined(picked) && picked.id) {
-        const id = picked.id.id || picked.id;
-        if (id === "origin_pin" || id === "dest_pin") {
-          draggedPin = id;
-          viewer.scene.screenSpaceCameraController.enableInputs = false;
-        }
-      }
-    }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
-
-    handler.setInputAction((movement) => {
-      if (!isLeftDown) return;
-      const dist = Cesium.Cartesian2.distance(startScreenPos, movement.endPosition);
-      if (dist >= 6) {
-        hasMovedPastThreshold = true;
-      }
-      if (draggedPin) {
-        const ray = viewer.camera.getPickRay(movement.endPosition);
-        const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
-        if (cartesian) {
-          const entity = viewer.entities.getById(draggedPin);
-          if (entity) {
-            entity.position = cartesian;
-          }
-        }
-      }
-    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
-
-    handler.setInputAction((movement) => {
-      if (!isLeftDown) return;
-      isLeftDown = false;
-      viewer.scene.screenSpaceCameraController.enableInputs = true;
-
-      if (draggedPin) {
-        const ray = viewer.camera.getPickRay(movement.position);
-        const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
-        if (cartesian) {
-          const carto = Cesium.Cartographic.fromCartesian(cartesian);
-          const lon = Cesium.Math.toDegrees(carto.longitude);
-          const lat = Cesium.Math.toDegrees(carto.latitude);
-          const role = (draggedPin === "origin_pin") ? "origin" : "destination";
-          sendPick(role, lon, lat);
-        }
-        draggedPin = null;
-        return;
-      }
-
-      // click without dragging places or moves pin
-      if (!hasMovedPastThreshold && currentPickMode !== "none") {
-        const ray = viewer.camera.getPickRay(movement.position);
-        const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
-        if (cartesian) {
-          const carto = Cesium.Cartographic.fromCartesian(cartesian);
-          const lon = Cesium.Math.toDegrees(carto.longitude);
-          const lat = Cesium.Math.toDegrees(carto.latitude);
-          sendPick(currentPickMode, lon, lat);
-        }
-      }
-    }, Cesium.ScreenSpaceEventType.LEFT_UP);
+    // sources and layers, drawn bottom to top
+    ["range", "zones", "trajectory"].forEach((id) => map.addSource(id, { type: "geojson", data: EMPTY }));
+    map.addLayer({ id: "range-fill", type: "fill", source: "range", paint: { "fill-color": "#ffffff", "fill-opacity": 0.05 } });
+    map.addLayer({ id: "range-line", type: "line", source: "range", paint: { "line-color": "#ffffff", "line-opacity": 0.55, "line-width": 3 } });
+    map.addLayer({ id: "zones-fill", type: "fill", source: "zones", paint: { "fill-color": ["get", "color"], "fill-opacity": ["get", "alpha"] } });
+    map.addLayer({ id: "zones-line", type: "line", source: "zones", paint: { "line-color": ["get", "color"], "line-opacity": 0.9, "line-width": 2 } });
+    map.addLayer({ id: "trajectory-line", type: "line", source: "trajectory", paint: { "line-color": "#ffffff", "line-opacity": 0.9, "line-width": 3 } });
 
     function sendPick(role, lon, lat) {
       fetch("/api/pick", {
@@ -270,63 +146,90 @@
       });
     }
 
-    // calculates arc samples for ballistic trajectory
-    function computeTrajectoryPoints(oLon, oLat, dLon, dLat, segments = 50) {
-      const c1 = Cesium.Cartographic.fromDegrees(oLon, oLat);
-      const c2 = Cesium.Cartographic.fromDegrees(dLon, dLat);
-      const geodesic = new Cesium.EllipsoidGeodesic(c1, c2);
-      const totalDist = geodesic.surfaceDistance;
-      const peakAltitude = Math.min(Math.max(totalDist * 0.12, 10000.0), 900000.0);
+    // a click without dragging places or moves a pin (mapbox does not fire click after a drag)
+    map.on("click", (e) => {
+      if (currentPickMode !== "none") sendPick(currentPickMode, e.lngLat.lng, e.lngLat.lat);
+    });
 
-      const positions = [];
+    // great-circle path from origin to destination
+    function computeTrajectoryPoints(oLon, oLat, dLon, dLat, segments = 100) {
+      const rad = Math.PI / 180;
+      const [la1, lo1, la2, lo2] = [oLat * rad, oLon * rad, dLat * rad, dLon * rad];
+      const d = 2 * Math.asin(Math.sqrt(Math.sin((la2 - la1) / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin((lo2 - lo1) / 2) ** 2));
+      const pts = [];
+      let prevLon = oLon;
       for (let i = 0; i <= segments; i++) {
         const f = i / segments;
-        const interp = geodesic.interpolateUsingFraction(f);
-        const h = Math.sin(f * Math.PI) * peakAltitude;
-        positions.push(Cesium.Cartesian3.fromRadians(interp.longitude, interp.latitude, h));
+        const a = d ? Math.sin((1 - f) * d) / Math.sin(d) : 1;
+        const b = d ? Math.sin(f * d) / Math.sin(d) : 0;
+        const x = a * Math.cos(la1) * Math.cos(lo1) + b * Math.cos(la2) * Math.cos(lo2);
+        const y = a * Math.cos(la1) * Math.sin(lo1) + b * Math.cos(la2) * Math.sin(lo2);
+        const z = a * Math.sin(la1) + b * Math.sin(la2);
+        let lon = Math.atan2(y, x) / rad;
+        while (lon - prevLon > 180) lon -= 360;   // keep longitude continuous across the antimeridian
+        while (lon - prevLon < -180) lon += 360;
+        prevLon = lon;
+        pts.push([lon, Math.atan2(z, Math.hypot(x, y)) / rad]);
       }
-      return positions;
+      return pts;
     }
 
-    // calculates spherical circle boundary points for missile range
+    // closed ring of points at radiusKm around a centre
     function computeCirclePoints(centerLon, centerLat, radiusKm, numPoints = 72) {
       const points = [];
       const R = 6371.0;
-      const radLat = Cesium.Math.toRadians(centerLat);
-      const radLon = Cesium.Math.toRadians(centerLon);
+      const radLat = centerLat * Math.PI / 180;
+      const radLon = centerLon * Math.PI / 180;
       const dByR = radiusKm / R;
 
       for (let i = 0; i <= numPoints; i++) {
         const bearing = (i * 360.0 / numPoints) * Math.PI / 180.0;
         const lat = Math.asin(Math.sin(radLat) * Math.cos(dByR) + Math.cos(radLat) * Math.sin(dByR) * Math.cos(bearing));
         const lon = radLon + Math.atan2(Math.sin(bearing) * Math.sin(dByR) * Math.cos(radLat), Math.cos(dByR) - Math.sin(radLat) * Math.sin(lat));
-        points.push(Cesium.Cartesian3.fromRadians(lon, lat, 100.0));
+        points.push([lon * 180 / Math.PI, lat * 180 / Math.PI]);
       }
       return points;
     }
 
-    const PIN_LABEL_STYLE = {
-      font: "600 13px 'Segoe UI', sans-serif",
-      fillColor: Cesium.Color.fromCssColorString("#ededed"),
-      showBackground: true,
-      backgroundColor: Cesium.Color.BLACK.withAlpha(0.75),
-      backgroundPadding: new Cesium.Cartesian2(10, 6),
-      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-      pixelOffset: new Cesium.Cartesian2(0, -16)
-    };
+    // draggable pin: coloured dot with a label above it
+    const pins = {};
+    function setPin(role, color, prefix, point) {
+      if (!point || typeof point.longitude !== "number") {
+        if (pins[role]) { pins[role].remove(); delete pins[role]; }
+        return;
+      }
+      const text = prefix + "  ·  " + (point.label || (role === "origin" ? "Launch Site" : "Detonation Target"));
+      if (!pins[role]) {
+        const el = document.createElement("div");
+        el.style.cssText = "width:14px;height:14px;border-radius:50%;border:2px solid #fff;background:" + color;
+        const label = document.createElement("div");
+        label.style.cssText = "position:absolute;bottom:22px;left:50%;transform:translateX(-50%);white-space:nowrap;" +
+          "font:600 13px 'Segoe UI',sans-serif;color:#ededed;background:rgba(0,0,0,0.75);padding:6px 10px;border-radius:4px";
+        el.appendChild(label);
+        const marker = new mapboxgl.Marker({ element: el, draggable: true }).setLngLat([point.longitude, point.latitude]).addTo(map);
+        marker.on("dragend", () => {
+          const p = marker.getLngLat();
+          sendPick(role, p.lng, p.lat);
+        });
+        pins[role] = marker;
+      }
+      pins[role].setLngLat([point.longitude, point.latitude]);
+      pins[role].getElement().firstChild.textContent = text;
+    }
 
     // blast zones, outermost first so inner zones draw on top.
     // fill gets stronger toward the centre so severity reads at a glance.
     const ZONES = [
-      { id: "ring_light",    key: "light_blast_1psi_km",    name: "Light blast (1 psi)",    color: "#fde047", alpha: 0.06 },
-      { id: "ring_thermal",  key: "thermal_3rd_deg_km",     name: "3rd-degree burns",       color: "#f59e0b", alpha: 0.10 },
-      { id: "ring_moderate", key: "moderate_blast_5psi_km", name: "Moderate blast (5 psi)", color: "#fb923c", alpha: 0.20 },
-      { id: "ring_heavy",    key: "heavy_blast_20psi_km",   name: "Heavy blast (20 psi)",   color: "#ef4444", alpha: 0.32 },
-      { id: "ring_fireball", key: "fireball_km",            name: "Fireball",               color: "#fff7d6", alpha: 0.60 },
+      { key: "light_blast_1psi_km",    name: "Light blast (1 psi)",    color: "#fde047", alpha: 0.06 },
+      { key: "thermal_3rd_deg_km",     name: "3rd-degree burns",       color: "#f59e0b", alpha: 0.10 },
+      { key: "moderate_blast_5psi_km", name: "Moderate blast (5 psi)", color: "#fb923c", alpha: 0.20 },
+      { key: "heavy_blast_20psi_km",   name: "Heavy blast (20 psi)",   color: "#ef4444", alpha: 0.32 },
+      { key: "fireball_km",            name: "Fireball",               color: "#fff7d6", alpha: 0.60 },
     ];
     const GROW_MS = 700;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let lastImpactKey = null;
+    let growFrame = null;
 
     function formatKm(km) {
       if (!(km > 0)) return "—";
@@ -334,16 +237,14 @@
       return (km < 10 ? km.toFixed(1) : Math.round(km).toLocaleString()) + " km";
     }
 
-    function zoneRadiusMeters(zone, radii) {
+    function zoneRadiusKm(zone, radii) {
       const km = Number(radii[zone.key]) || 0;
-      return zone.key === "fireball_km" ? Math.max(km * 1000, 50) : km * 1000;
+      return zone.key === "fireball_km" ? Math.max(km, 0.05) : km;
     }
 
     function clearImpact() {
-      ZONES.forEach((z) => {
-        viewer.entities.removeById(z.id);
-        viewer.entities.removeById(z.id + "_edge");
-      });
+      cancelAnimationFrame(growFrame);
+      map.getSource("zones").setData(EMPTY);
       document.getElementById("legend").classList.remove("show");
       lastImpactKey = null;
     }
@@ -357,48 +258,17 @@
       clearImpact();
       lastImpactKey = key;
 
-      const center = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+      // rings burst out fast then settle (ease-out cubic), like a shockwave
       const start = performance.now();
-      // ease-out cubic: rings burst out fast then settle, like a shockwave
-      const progress = () => {
-        if (reduceMotion) return 1;
-        const t = Math.min((performance.now() - start) / GROW_MS, 1);
-        return 1 - Math.pow(1 - t, 3);
+      const draw = () => {
+        const t = reduceMotion ? 1 : Math.min((performance.now() - start) / GROW_MS, 1);
+        const grow = 1 - Math.pow(1 - t, 3);
+        const features = ZONES.filter((z) => zoneRadiusKm(z, radii) > 0).map((z) =>
+          polygon(computeCirclePoints(lon, lat, Math.max(zoneRadiusKm(z, radii) * grow, 0.001), 128), { color: z.color, alpha: z.alpha }));
+        map.getSource("zones").setData({ type: "FeatureCollection", features });
+        if (t < 1) growFrame = requestAnimationFrame(draw);
       };
-
-      ZONES.forEach((z) => {
-        const radius = zoneRadiusMeters(z, radii);
-        if (!(radius > 0)) return;
-        const axis = new Cesium.CallbackProperty(() => Math.max(radius * progress(), 1), false);
-        viewer.entities.add({
-          id: z.id,
-          position: center,
-          ellipse: {
-            semiMajorAxis: axis,
-            semiMinorAxis: axis,
-            material: Cesium.Color.fromCssColorString(z.color).withAlpha(z.alpha),
-            outline: false
-          }
-        });
-      });
-
-      // crisp edges are added once growth finishes (ground polylines are too costly to rebuild every frame)
-      setTimeout(() => {
-        if (lastImpactKey !== key) return;
-        ZONES.forEach((z) => {
-          const radius = zoneRadiusMeters(z, radii);
-          if (!(radius > 0)) return;
-          viewer.entities.add({
-            id: z.id + "_edge",
-            polyline: {
-              positions: computeCirclePoints(lon, lat, radius / 1000, 128),
-              width: 2,
-              material: Cesium.Color.fromCssColorString(z.color).withAlpha(0.9),
-              clampToGround: true
-            }
-          });
-        });
-      }, reduceMotion ? 0 : GROW_MS);
+      draw();
 
       // legend lists zones from the centre outward
       const rows = ZONES.slice().reverse().map((z) =>
@@ -413,135 +283,30 @@
     }
 
     function renderState(state) {
-      // 1. origin pin
-      if (state.origin && typeof state.origin.longitude === "number") {
-        const pos = Cesium.Cartesian3.fromDegrees(state.origin.longitude, state.origin.latitude, 0);
-        let origEntity = viewer.entities.getById("origin_pin");
-        if (!origEntity) {
-          origEntity = viewer.entities.add({
-            id: "origin_pin",
-            position: pos,
-            point: {
-              pixelSize: 14,
-              color: Cesium.Color.fromCssColorString("#22c55e"),
-              outlineColor: Cesium.Color.WHITE,
-              outlineWidth: 2
-            },
-            label: {
-              text: "Launch  ·  " + (state.origin.label || "Launch Site"),
-              ...PIN_LABEL_STYLE
-            }
-          });
-        } else {
-          origEntity.position = pos;
-          origEntity.label.text = "Launch  ·  " + (state.origin.label || "Launch Site");
-        }
-      } else {
-        viewer.entities.removeById("origin_pin");
-      }
+      setPin("origin", "#22c55e", "Launch", state.origin);
+      setPin("destination", "#ef4444", "Target", state.destination);
 
-      // 2. destination pin
-      if (state.destination && typeof state.destination.longitude === "number") {
-        const pos = Cesium.Cartesian3.fromDegrees(state.destination.longitude, state.destination.latitude, 0);
-        let destEntity = viewer.entities.getById("dest_pin");
-        if (!destEntity) {
-          destEntity = viewer.entities.add({
-            id: "dest_pin",
-            position: pos,
-            point: {
-              pixelSize: 14,
-              color: Cesium.Color.fromCssColorString("#ef4444"),
-              outlineColor: Cesium.Color.WHITE,
-              outlineWidth: 2
-            },
-            label: {
-              text: "Target  ·  " + (state.destination.label || "Detonation Target"),
-              ...PIN_LABEL_STYLE
-            }
-          });
-        } else {
-          destEntity.position = pos;
-          destEntity.label.text = "Target  ·  " + (state.destination.label || "Detonation Target");
-        }
-      } else {
-        viewer.entities.removeById("dest_pin");
-      }
-
-      // 3. max range circle and glowing perimeter border
-      if (state.origin && typeof state.origin.longitude === "number" && state.missile && state.missile.max_range_km) {
+      // max range circle
+      const hasOrigin = state.origin && typeof state.origin.longitude === "number";
+      if (hasOrigin && state.missile && state.missile.max_range_km) {
         const radiusKm = Math.min(Number(state.missile.max_range_km) || 0, 9500);
-        const radiusMeters = radiusKm * 1000.0;
-        const pos = Cesium.Cartesian3.fromDegrees(state.origin.longitude, state.origin.latitude, 0);
-
-        let rangeEntity = viewer.entities.getById("range_circle");
-        if (!rangeEntity) {
-          rangeEntity = viewer.entities.add({
-            id: "range_circle",
-            position: pos,
-            ellipse: {
-              semiMajorAxis: radiusMeters,
-              semiMinorAxis: radiusMeters,
-              material: Cesium.Color.WHITE.withAlpha(0.05),
-              outline: false,
-              height: 0
-            }
-          });
-        } else {
-          rangeEntity.position = pos;
-          rangeEntity.ellipse.semiMajorAxis = radiusMeters;
-          rangeEntity.ellipse.semiMinorAxis = radiusMeters;
-        }
-
-        const circlePoints = computeCirclePoints(state.origin.longitude, state.origin.latitude, radiusKm);
-        let borderEntity = viewer.entities.getById("range_border_line");
-        if (!borderEntity) {
-          borderEntity = viewer.entities.add({
-            id: "range_border_line",
-            polyline: {
-              positions: circlePoints,
-              width: 3,
-              material: new Cesium.PolylineGlowMaterialProperty({
-                glowPower: 0.2,
-                color: Cesium.Color.WHITE.withAlpha(0.55)
-              }),
-              clampToGround: true
-            }
-          });
-        } else {
-          borderEntity.polyline.positions = circlePoints;
-        }
+        const ring = computeCirclePoints(state.origin.longitude, state.origin.latitude, radiusKm);
+        map.getSource("range").setData(polygon(ring));
       } else {
-        viewer.entities.removeById("range_circle");
-        viewer.entities.removeById("range_border_line");
+        map.getSource("range").setData(EMPTY);
       }
 
-      // 4. trajectory line
+      // trajectory line
       if (state.origin && state.destination) {
-        const arcPositions = computeTrajectoryPoints(
+        map.getSource("trajectory").setData(line(computeTrajectoryPoints(
           state.origin.longitude, state.origin.latitude,
           state.destination.longitude, state.destination.latitude
-        );
-        let lineEntity = viewer.entities.getById("trajectory_line");
-        if (!lineEntity) {
-          lineEntity = viewer.entities.add({
-            id: "trajectory_line",
-            polyline: {
-              positions: arcPositions,
-              width: 3,
-              material: new Cesium.PolylineGlowMaterialProperty({
-                glowPower: 0.2,
-                color: Cesium.Color.WHITE.withAlpha(0.9)
-              })
-            }
-          });
-        } else {
-          lineEntity.polyline.positions = arcPositions;
-        }
+        )));
       } else {
-        viewer.entities.removeById("trajectory_line");
+        map.getSource("trajectory").setData(EMPTY);
       }
 
-      // 5. blast rings and legend if launched
+      // blast rings and legend if launched
       if (state.launched && state.impact && state.impact.radii_km && state.destination) {
         renderImpact(state);
       } else {
@@ -566,15 +331,10 @@
 
         if (state.fly_to && state.fly_to.fly_id !== lastFlyId) {
           lastFlyId = state.fly_to.fly_id;
-          const height = Math.max(state.fly_to.height || 350000.0, 100.0);
-          const destination = Cesium.Cartesian3.fromDegrees(state.fly_to.lon, state.fly_to.lat, height);
-          if (reduceMotion) {
-            viewer.camera.setView({ destination });
-          } else {
-            // no fixed duration: cesium scales it with distance (short hops quick, long
-            // flights up to 3 s). ease-in-out because the camera moves across the screen.
-            viewer.camera.flyTo({ destination, easingFunction: Cesium.EasingFunction.QUARTIC_IN_OUT });
-          }
+          // fly_to.height is a camera altitude in metres; convert to an approximate zoom level
+          const zoom = Math.min(Math.max(Math.log2(4.5e7 / Math.max(state.fly_to.height || 350000, 100)), 1), 18);
+          const opts = { center: [state.fly_to.lon, state.fly_to.lat], zoom };
+          if (reduceMotion) map.jumpTo(opts); else map.flyTo(opts);
         }
 
         if (state.version !== lastVersion) {
